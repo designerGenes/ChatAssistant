@@ -1,14 +1,24 @@
 #!/usr/bin/env python3
+import os
+import sys
+sys.path.append(os.path.join(os.environ.get('PYTHON_DIR'), 'keysuck'))
+from keysuck import find_value_in_yaml
 import openai
-import argparse
 import pymongo
 from datetime import datetime
-import sys
-import os
-from keysuck import find_value_in_yaml
 from dataclasses import dataclass
 from loading_indicator import Spinner
-from colors import COLORS
+import typer 
+
+
+app = typer.Typer()
+
+COLORS = {
+    "YELLOW": '\033[93m',
+    "RESET": '\033[0m',
+    "WHITE": '\033[97m',
+    "RED": '\033[91m',
+}
 
 @dataclass
 class Options:
@@ -33,12 +43,13 @@ GPT_MODEL_MAX_TOKENS = {
 
 def get_gpt_response(options, prompt, model_engine, conversation=None):
     openai.api_key = options.api_key
-    if (options.base):
-        openai.api_base = options.base
-        print(f"{COLORS['YELLOW']}using custom base: {COLORS['WHITE']} {options.base} {COLORS['RESET']}")    
+    custom_base = options.base if options.base else None
+    if custom_base:
+        openai.api_base = custom_base
+        print(f"{COLORS['YELLOW']}using custom base: {COLORS['WHITE']} {custom_base} {COLORS['RESET']}")    
 
     
-    system_message = options.system_msg or """
+    system_message = options.system_msg if options.system_msg else """
                 You are a helpful assistant that follows these rules:
                 1. Do not use more tokens than the max_token limit for any response.
                 2. Directly answer any questions from the user in the most concise and accurate manner.
@@ -113,40 +124,37 @@ def get_mongo_collection():
     client = pymongo.MongoClient("mongodb://localhost:27017/")
     return client['gpt_conversations']['conversations']
 
-def main():
-    parser = argparse.ArgumentParser(description="Get a response from OpenAI's GPT model.")
-    parser.add_argument("-t", "--timestamp", type=str, help="Timestamp for conversation context.")
-    parser.add_argument("-c", "--context", action="store_true", help="Display conversation context.")
-    parser.add_argument("-s", "--system_msg", type=str, help="Custom system message.")
-    parser.add_argument("-o", "--output", type=str, help="Save output to a file")
-    parser.add_argument("-b", "--base", type=str, help="Set custom local base for OpenAI API")
-    parser.add_argument("--session", action="store_true", help="Use the latest session timestamp.")
-    parser.add_argument("-k, --api_key", type=str, help="OpenAI API key.")
+def main(
+    prompt: str,
+    timestamp: str = None,
+    context: bool = False,
+    system_msg: str = None,
+    output: str = None,
+    base: str = None,
+    session: bool = False,
+    api_key: str = find_value_in_yaml(["OPEN_AI", "CHAT_ASSISTANT"])
+):
     
-    args, unknown = parser.parse_known_args()
+    if not prompt:
+        typer.echo("Some form of prompt is required!")
+        raise typer.Exit()
     
-    api_key = find_value_in_yaml(["OPEN_AI", "CHAT_ASSISTANT"])
     if not api_key:
-        api_key = args.api_key
-    if not api_key:
-        print("API key is required.")
-        sys.exit(1)
+        typer.echo("OpenAI API key is required!")
+        raise typer.Exit()
+
+    
 
     options = Options(
-        timestamp = args.timestamp,
-        show_context = args.context,
-        system_msg = args.system_msg,
-        output = args.output,
-        base = args.base,
-        api_key = find_value_in_yaml(["OPEN_AI", "CHAT_ASSISTANT"]),
-        session = args.session
+        timestamp=timestamp,
+        show_context=context,
+        system_msg=system_msg,
+        output=output,
+        base=base,
+        api_key=api_key,
+        session=session
     )
     
-    if unknown:
-        prompt = unknown[-1]
-    else:
-        print("Prompt is required.")
-        sys.exit(1)
 
     if options.session:
         options.timestamp = get_or_create_session_timestamp()
@@ -167,7 +175,7 @@ def main():
 
     did_receive_response(options, prompt, response)
 
-    if not options.session or args.timestamp:
+    if not options.session or options.timestamp:
         clear_latest_session_timestamp()
 
 def did_receive_response(options: Options, prompt, response):
@@ -193,5 +201,5 @@ def did_receive_response(options: Options, prompt, response):
             print(f"User: {record['user_input']}{COLORS['WHITE']}GPT: {record['gpt_response']}{COLORS['RESET']}\n")
 
 if __name__ == "__main__":
-    main()
+    typer.run(main)
     
